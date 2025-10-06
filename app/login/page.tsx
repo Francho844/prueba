@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { syncServerCookies, pickDestination } from './helpers'
@@ -11,6 +11,7 @@ const DOMAIN = process.env.NEXT_PUBLIC_RUN_LOGIN_DOMAIN || 'estudiante.stc'
 const looksLikeEmail = (v: string) => /\S+@\S+\.\S+/.test(v)
 
 export default function LoginPage() {
+  const router = useRouter()
   const qp = useSearchParams()
   const [userInput, setUserInput] = useState('')   // RUN o email
   const [password, setPassword] = useState('')     // puede ser RUN
@@ -23,7 +24,7 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      // 1) Construye posibles emails a probar
+      // 1) Posibles emails a probar
       let emailsToTry: string[] = []
       if (looksLikeEmail(userInput)) {
         emailsToTry = [userInput.trim()]
@@ -34,41 +35,48 @@ export default function LoginPage() {
         const noDash = `${runNorm.replace('-', '')}@${DOMAIN}` // 123456789@estudiante.stc
         emailsToTry = [withDash, noDash]
       }
-      emailsToTry = Array.from(new Set(emailsToTry)) // dedup
+      emailsToTry = Array.from(new Set(emailsToTry))
 
-      // 2) Construye posibles contraseñas a probar (usuario puede escribir RUN en otro formato)
+      // 2) Posibles contraseñas a probar
       let pwToTry: string[] = []
       const p0 = password.trim()
       pwToTry.push(p0)
-      // si el usuario ingresó RUN como usuario, probamos variantes normalizadas del RUN como password
       if (!looksLikeEmail(userInput)) {
-        const pn = normalizeRun(p0)                 // 12345678-9 (K mayúscula)
-        const pn2 = pn.replace('-', '')            // 123456789
+        const pn = normalizeRun(p0)          // 12345678-9
+        const pn2 = pn.replace('-', '')      // 123456789
         pwToTry.push(pn, pn2)
       }
-      pwToTry = Array.from(new Set(pwToTry)) // dedup
+      pwToTry = Array.from(new Set(pwToTry))
 
-      // 3) Intenta iniciar sesión con combinaciones controladas (pocas)
+      // 3) Intento de login capturando la SESIÓN devuelta
       let logged = false
+      let sessionOk: import('@supabase/supabase-js').Session | null = null
       let lastError: any = null
+
       for (const email of emailsToTry) {
         for (const pw of pwToTry) {
-          const { error } = await supabase.auth.signInWithPassword({ email, password: pw })
-          if (!error) { logged = true; break }
+          const { data, error } = await supabase.auth.signInWithPassword({ email, password: pw })
+          if (!error) {
+            sessionOk = data?.session ?? null
+            logged = true
+            break
+          }
           lastError = error
         }
         if (logged) break
       }
-      if (!logged) {
-        // Mensaje claro para el alumno
-        throw new Error('Credenciales inválidas. Verifica tu RUN y contraseña (incluye el guion y DV).')
+
+      if (!logged || !sessionOk) {
+        throw new Error(lastError?.message || 'Credenciales inválidas. Verifica tu RUN y contraseña (incluye el guion y DV).')
       }
 
-      // 4) Sincroniza cookies httpOnly en el servidor (pasa los tokens explícitos)
-      const { data: { session } } = await supabase.auth.getSession()
-      await syncServerCookies(session?.access_token ?? undefined, session?.refresh_token ?? undefined)
+      // 4) Sincroniza cookies httpOnly en el servidor con los TOKENS de esa sesión
+      await syncServerCookies(sessionOk.access_token, sessionOk.refresh_token)
 
-      // 5) Redirige según /api/me/destination o (fallback) roles → /admin /teacher /estudiante
+      // 5) Refresca para que middleware/SSR lean la nueva cookie
+      router.refresh()
+
+      // 6) Decide destino desde el server y redirige
       const { data: { user } } = await supabase.auth.getUser()
       const dest = await pickDestination(user?.id || '', qp.get('redirect'))
       window.location.href = dest

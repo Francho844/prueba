@@ -1,14 +1,19 @@
-import { NextResponse, NextRequest } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
+
+const PUBLIC_PATHS = new Set([
+  '/', '/login', '/signup', '/auth/callback',
+  '/favicon.ico', '/robots.txt', '/sitemap.xml'
+])
+
+// Protege lo que necesites:
+const PROTECTED_PREFIXES = ['/admin', '/teacher', '/estudiante']
 
 export function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl
 
-  const PUBLIC_PATHS = [
-    '/login', '/signup', '/auth/callback',
-    '/favicon.ico', '/robots.txt', '/sitemap.xml'
-  ]
   if (
-    PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
+    PUBLIC_PATHS.has(pathname) ||
+    pathname.startsWith('/auth/') ||
     pathname.startsWith('/api') ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/static') ||
@@ -17,14 +22,12 @@ export function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  if (pathname.startsWith('/admin')) {
+  if (PROTECTED_PREFIXES.some(p => pathname.startsWith(p))) {
     const access = req.cookies.get('sb-access-token')?.value
-    const refresh = req.cookies.get('sb-refresh-token')?.value
-    if (!access || !refresh) {
+    if (!access) {
       const url = req.nextUrl.clone()
       url.pathname = '/login'
-      const redirect = pathname + (search || '')
-      url.searchParams.set('redirect', redirect)
+      url.searchParams.set('redirect', pathname + (search || ''))
       return NextResponse.redirect(url)
     }
   }
@@ -33,5 +36,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next|api|static|.*\..*).*)'],
+  matcher: ['/((?!api|_next|static|.*\\..*).*)'],
 }

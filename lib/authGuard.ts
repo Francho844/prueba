@@ -1,61 +1,68 @@
+// lib/authGuard.ts
+// ⚠️ Server-only: NO importes este archivo en componentes con 'use client'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { supabaseAdmin } from './supabaseAdmin'
+import { supabaseAdmin } from '@/lib/supabase'
 
-function decodeJwt(token: string): any | null {
-  try {
-    const parts = token.split('.')
-    if (parts.length < 2) return null
-    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-    const pad = payload.length % 4 ? 4 - (payload.length % 4) : 0
-    const base = payload + '='.repeat(pad)
-    const json = Buffer.from(base, 'base64').toString('utf8')
-    return JSON.parse(json)
-  } catch { return null }
-}
+const ADMIN_LIKE = new Set(['admin', 'administrator', 'administrador', 'superadmin', 'super_admin', 'root'])
 
-export async function getUserIdFromCookies(): Promise<string | null> {
-  const c = await cookies()
-  const at = c.get('sb-access-token')?.value
-  if (!at) return null
-  const payload = decodeJwt(at)
-  const sub = payload?.sub || payload?.user_id || null
-  return sub ?? null
-}
-
+/**
+ * Devuelve true si el usuario tiene rol admin.
+ * Hace lookup en dos pasos: user_roles -> roles (code/name).
+ */
 export async function isAdminUser(userId: string): Promise<boolean> {
-  const { data, error } = await supabaseAdmin
+  if (!userId) return false
+
+  // 1) Traer role_ids del usuario
+  const { data: urRows, error: urErr } = await supabaseAdmin
     .from('user_roles')
-    .select('roles:role_id(code)')
+    .select('role_id')
     .eq('user_id', userId)
-  if (error) return false
-  const roles = (data ?? []).map((r: any) => r?.roles?.code).filter(Boolean)
-  return roles.includes('admin')
+
+  if (urErr || !urRows?.length) return false
+  const roleIds = urRows.map((r: any) => r?.role_id).filter(Boolean)
+  if (!roleIds.length) return false
+
+  // 2) Traer códigos desde roles (tu tabla tiene code/name)
+  const { data: roleRows, error: rErr } = await supabaseAdmin
+    .from('roles')
+    .select('code, name')
+    .in('id', roleIds)
+
+  if (rErr || !roleRows?.length) return false
+
+  const codes = roleRows
+    .map((r: any) => String(r?.code ?? r?.name ?? '').toLowerCase().trim())
+    .filter(Boolean)
+
+  return codes.some(c => ADMIN_LIKE.has(c))
 }
 
-export async function requireAdmin(opts?: { redirectTo?: string }) {
-  const userId = await getUserIdFromCookies()
-  if (!userId) redirect('/login')
-  const ok = await isAdminUser(userId!)
-  if (!ok) redirect(opts?.redirectTo ?? '/dashboard')
-  return userId!
-}
+/**
+ * Protege layouts/páginas server. Si no hay sesión o no es admin, redirige.
+ * Uso: await requireAdmin() en un Server Component (por ej. app/admin/layout.tsx).
+ */
+export async function requireAdmin(): Promise<void> {
+  const jar = cookies()
+  const token = jar.get('sb-access-token')?.value
 
-export async function isTeacherUser(userId: string): Promise<boolean> {
-  const { data, error } = await supabaseAdmin
-    .from('user_roles')
-    .select('roles:role_id(code)')
-    .eq('user_id', userId)
-  if (error) return false
-  const codes = (data ?? []).map((r: any) => String(r?.roles?.code || '').toLowerCase().trim())
-  const teacherLike = new Set(['teacher','profesor','docente','teachers'])
-  return codes.some(c => teacherLike.has(c)) || codes.includes('admin')
-}
+  // Sin token => a login
+  if (!token) {
+    redirect('/login')
+  }
 
-export async function requireTeacher(opts?: { redirectTo?: string }) {
-  const userId = await getUserIdFromCookies()
-  if (!userId) redirect('/login')
-  const ok = await isTeacherUser(userId!)
-  if (!ok) redirect(opts?.redirectTo ?? '/dashboard')
-  return userId!
+  // Resolver userId desde el token (server-side, con service role)
+  const { data, error } = await supabaseAdmin.auth.getUser(token)
+  const userId = data?.user?.id
+  if (error || !userId) {
+    redirect('/login')
+  }
+
+  // Check de rol admin
+  const ok = await isAdminUser(userId)
+  if (!ok) {
+    redirect('/estudiante') // o '/' si prefieres
+  }
+
+  // Si es admin, simplemente retorna (deja pasar)
 }
