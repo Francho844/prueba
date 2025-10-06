@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { supabase } from '../../../../lib/supabase'
+import { supabase } from '@/lib/supabase'
 import { Loader2, Save, Printer, Upload, Image as ImageIcon } from 'lucide-react'
 
 type Student = {
@@ -185,7 +185,6 @@ export default function AlumnoDetailPage({ params }: { params: { id: string } })
 
       const supOne = pickOneGuardian(supRaw)
       if (supOne) setGSup(prev => ({ ...prev, ...supOne, relationship: 'suplente' }))
-
 
       // Matrícula (año activo si existe; sino la última)
       let ef: EnrollmentForm | null = null
@@ -485,15 +484,16 @@ export default function AlumnoDetailPage({ params }: { params: { id: string } })
   // ====== Derivados para FICHA (con fallback a formularios)
   const titularForFicha = useMemo<Guardian | null>(() => {
     const row = sg.find(x => x.role === 'titular')
-    if (row?.guardians) return row.guardians
-    // fallback: si hay datos escritos en el form titular, úsalos
+    const g = pickOneGuardian(row?.guardians ?? null)
+    if (g) return g
     if (gTit.run || gTit.first_name || gTit.last_name || gTit.email || gTit.phone) return gTit
     return null
   }, [sg, gTit])
 
   const suplenteForFicha = useMemo<Guardian | null>(() => {
     const row = sg.find(x => x.role === 'suplente')
-    if (row?.guardians) return row.guardians
+    const g = pickOneGuardian(row?.guardians ?? null)
+    if (g) return g
     if (gSup.run || gSup.first_name || gSup.last_name || gSup.email || gSup.phone) return gSup
     return null
   }, [sg, gSup])
