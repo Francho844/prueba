@@ -32,8 +32,14 @@ type Guardian = {
 type StudentGuardian = {
   student_id: string
   guardian_id: string
-  role: string | null // BD puede traer 'Madre/Padre/suplente/etc'
-  guardians?: Guardian | null
+  role: string | null
+  guardians?: Guardian | Guardian[] | null // admite array u objeto
+}
+
+// Normalizador: devuelve un solo Guardian o null
+function pickOneGuardian(g?: Guardian | Guardian[] | null): Guardian | null {
+  if (!g) return null
+  return Array.isArray(g) ? (g[0] ?? null) : g
 }
 
 type EnrollmentForm = {
@@ -171,10 +177,15 @@ export default function AlumnoDetailPage({ params }: { params: { id: string } })
       const linksNorm = (links || []).map(l => ({ ...l, role: normRole(l.role) }))
       setSg(linksNorm as any)
 
-      const tit = linksNorm.find(x => x.role === 'titular')?.guardians
-      if (tit) setGTit({ ...tit, relationship: 'titular' })
-      const sup = linksNorm.find(x => x.role === 'suplente')?.guardians
-      if (sup) setGSup({ ...sup, relationship: 'suplente' })
+      const titRaw = linksNorm.find(x => x.role === 'titular')?.guardians
+      const supRaw = linksNorm.find(x => x.role === 'suplente')?.guardians
+
+      const titOne = pickOneGuardian(titRaw)
+      if (titOne) setGTit(prev => ({ ...prev, ...titOne, relationship: 'titular' }))
+
+      const supOne = pickOneGuardian(supRaw)
+      if (supOne) setGSup(prev => ({ ...prev, ...supOne, relationship: 'suplente' }))
+
 
       // Matrícula (año activo si existe; sino la última)
       let ef: EnrollmentForm | null = null
