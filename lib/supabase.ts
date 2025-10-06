@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 /**
  * Cliente de navegador (ANON).
- * Persistimos sesión para que el SDK pueda refrescar tokens.
+ * Persistimos sesión para refresh automático del SDK.
  */
 export const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -13,8 +13,7 @@ export const supabase = createClient(
 
 /**
  * Admin SOLO en servidor, creado lazy (no en el import).
- * - En cliente: NO se crea ni se lee ninguna env.
- * - En servidor: se construye la primera vez que se usa.
+ * Así no revienta en componentes 'use client'.
  */
 let _admin: SupabaseClient | null = null
 function getSupabaseAdmin(): SupabaseClient {
@@ -27,22 +26,19 @@ function getSupabaseAdmin(): SupabaseClient {
   if (!URL || !SRK) {
     throw new Error('Faltan env: NEXT_PUBLIC_SUPABASE_URL y/o SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SERVICE_ROLE')
   }
-  _admin = createClient(URL, SRK, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
+  _admin = createClient(URL, SRK, { auth: { persistSession: false, autoRefreshToken: false } })
   return _admin
 }
 
 /**
- * Compatibilidad retro: exponemos `supabaseAdmin.from(...)`
- * como si fuera un cliente. Internamente delega a getSupabaseAdmin()
- * en el primer acceso (solo en server).
+ * Export named: supabaseAdmin (cliente objeto).
+ * Internamente delega al cliente real en el primer acceso (solo server).
  */
 export const supabaseAdmin = new Proxy(
   {},
   {
     get(_t, prop) {
-      // @ts-ignore - delega cualquier método/propiedad al cliente real
+      // @ts-ignore
       const val = (getSupabaseAdmin() as any)[prop]
       return typeof val === 'function' ? val.bind(getSupabaseAdmin()) : val
     },
